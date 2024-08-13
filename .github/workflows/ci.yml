@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - '[0-9]+.[0-9]+.x'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Generate JSON schema types
+        # Schema types are required to correctly lint the TypeScript code
+        run: yarn admin build-schema
+      - name: Run ESLint
+        run: yarn lint --cache-strategy content
+      - name: Validate NgBot Configuration
+        run: yarn ng-dev ngbot verify
+      - name: Validate Circular Dependencies
+        run: yarn ts-circular-deps check
+      - name: Run Validation
+        run: yarn admin validate
+      - name: Check tooling setup
+        run: yarn check-tooling-setup
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel RBE
+        uses: angular/dev-infra/github-actions/bazel/configure-remote@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Build release targets
+        run: yarn ng-dev release build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel RBE
+        uses: angular/dev-infra/github-actions/bazel/configure-remote@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Run module tests
+        run: yarn bazel test //modules/...
+      - name: Run package tests
+        run: yarn bazel test //packages/...
+
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [18, 20, 22]
+        subset: [npm, esbuild]
+        shard: [0, 1, 2, 3, 4, 5]
+        exclude:
+          # Skip yarn subset on Windows
+          - os: windows-latest
+            subset: yarn
+          # Skip pnpm subset on Windows
+          - os: windows-latest
+            subset: pnpm
+          # Skip Node.js v18 tests on Windows
+          - os: windows-latest
+            node: 18
+          # Skip Node.js v20 tests on Windows
+          - os: windows-latest
+            node: 20
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel RBE
+        uses: angular/dev-infra/github-actions/bazel/configure-remote@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Run CLI E2E tests
+        run: yarn bazel test --define=E2E_SHARD_TOTAL=6 --define=E2E_SHARD_INDEX=${{ matrix.shard }} --config=e2e //tests/legacy-cli:e2e.${{ matrix.subset }}_node${{ matrix.node }}
+
+  e2e-package-managers:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: [22]
+        subset: [yarn, pnpm]
+        shard: [0, 1, 2]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel RBE
+        uses: angular/dev-infra/github-actions/bazel/configure-remote@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Run CLI E2E tests
+        run: yarn bazel test --define=E2E_SHARD_TOTAL=3 --define=E2E_SHARD_INDEX=${{ matrix.shard }} --config=e2e //tests/legacy-cli:e2e.${{ matrix.subset }}_node${{ matrix.node }}
+
+  e2e-snapshots:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: [18]
+        subset: [npm, esbuild]
+        shard: [0, 1, 2, 3, 4, 5]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel RBE
+        uses: angular/dev-infra/github-actions/bazel/configure-remote@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Run CLI E2E tests
+        run: yarn bazel test --define=E2E_SHARD_TOTAL=6 --define=E2E_SHARD_INDEX=${{ matrix.shard }} --config=e2e //tests/legacy-cli:e2e.snapshots.${{ matrix.subset }}_node${{ matrix.node }}
+
+  browsers:
+    runs-on: ubuntu-latest
+    name: Browser Compatibility Tests
+    env:
+      SAUCE_TUNNEL_IDENTIFIER: angular-cli-${{ github.workflow }}-${{ github.run_number }}
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Setup Bazel RBE
+        uses: angular/dev-infra/github-actions/bazel/configure-remote@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Run E2E Browser tests
+        env:
+          SAUCE_USERNAME: ${{ vars.SAUCE_USERNAME }}
+          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
+          SAUCE_LOG_FILE: /tmp/angular/sauce-connect.log
+          SAUCE_READY_FILE: /tmp/angular/sauce-connect-ready-file.lock
+          SAUCE_PID_FILE: /tmp/angular/sauce-connect-pid-file.lock
+          SAUCE_TUNNEL_IDENTIFIER: 'angular-${{ github.run_number }}'
+          SAUCE_READY_FILE_TIMEOUT: 120
+        run: |
+          ./scripts/saucelabs/start-tunnel.sh &
+          ./scripts/saucelabs/wait-for-tunnel.sh
+          yarn bazel test --config=saucelabs //tests/legacy-cli:e2e.saucelabs
+          ./scripts/saucelabs/stop-tunnel.sh
+      - uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4.3.6
+        if: ${{ failure() }}
+        with:
+          name: sauce-connect-log
+          path: ${{ env.SAUCE_CONNECT_DIR_IN_HOST }}/sauce-connect.log
+
+  publish-snapshots:
+    runs-on: ubuntu-latest
+    env:
+      CIRCLE_BRANCH: ${{ github.ref_name }}
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - name: Install node modules
+        run: yarn install --immutable
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@d66f2009955fd4b3430d9cf7072d94f4b4da95e7
+      - run: yarn admin snapshots --verbose
+        env:
+          SNAPSHOT_BUILDS_GITHUB_TOKEN: ${{ secrets.SNAPSHOT_BUILDS_GITHUB_TOKEN }}
